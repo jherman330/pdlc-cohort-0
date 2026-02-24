@@ -1,41 +1,52 @@
-using Azure.Identity;
-using Microsoft.Azure.Cosmos;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Todo.Core.Infrastructure;
+using Todo.Core.Middleware;
 
-var credential = new DefaultAzureCredential();
 var builder = WebApplication.CreateBuilder(args);
 
-// Cosmos client: used when AZURE_COSMOS_* is set (e.g. by infra). Add your own repositories and wire them here.
-builder.Services.AddSingleton(_ => new CosmosClient(builder.Configuration["AZURE_COSMOS_ENDPOINT"], credential, new CosmosClientOptions()
-{
-    SerializerOptions = new CosmosSerializationOptions
-    {
-        PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
-    }
-}));
+// Serilog as the logging provider
+builder.Host.UseSerilog((context, services, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration)
+    .Enrich.FromLogContext());
+
+// Core infrastructure (Cosmos and shared registrations via extensions)
+builder.Services.AddCoreInfrastructure(builder.Configuration);
+
 builder.Services.AddCors();
 builder.Services.AddApplicationInsightsTelemetry(builder.Configuration);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddHealthChecks();
+builder.Services.AddControllers();
+
 var app = builder.Build();
 
+// Middleware order: request logging first, then CORS, then error handling, then routing/endpoints
+app.UseRequestLogging();
 app.UseCors(policy =>
 {
     policy.AllowAnyOrigin();
     policy.AllowAnyHeader();
     policy.AllowAnyMethod();
 });
+app.UseErrorHandling();
 
 // Swagger UI
-app.UseSwaggerUI(options => {
+app.UseSwaggerUI(options =>
+{
     options.SwaggerEndpoint("./openapi.yaml", "v1");
     options.RoutePrefix = "";
 });
 
-app.UseStaticFiles(new StaticFileOptions{
-    // Serve openapi.yaml file
+app.UseStaticFiles(new StaticFileOptions
+{
     ServeUnknownFileTypes = true,
 });
 
+app.UseRouting();
+app.MapControllers();
+app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = async (context, report) => await context.Response.WriteAsync("Healthy") });
 app.MapGet("/", () => Results.Ok("OK"));
-app.MapGet("/health", () => Results.Ok());
+
 app.Run();
