@@ -1,7 +1,9 @@
 using Azure.Identity;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.Caching.StackExchangeRedis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Todo.Core.Services;
 
 namespace Todo.Core.Infrastructure;
 
@@ -12,12 +14,45 @@ namespace Todo.Core.Infrastructure;
 public static class StartupExtensions
 {
     /// <summary>
-    /// Adds core infrastructure services: Cosmos DB client and shared registrations.
+    /// Adds core infrastructure services: Cosmos DB client, Redis cache, idempotency service, and shared registrations.
     /// Call from the API host during startup.
     /// </summary>
     public static IServiceCollection AddCoreInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddCosmosDb(configuration);
+        services.AddRedisCache(configuration);
+        services.AddIdempotencyService(configuration);
+        return services;
+    }
+
+    /// <summary>
+    /// Configures IDistributedCache with Redis when AZURE_REDIS_CONNECTION_STRING (or Redis:ConnectionString) is set;
+    /// otherwise uses in-memory distributed cache so idempotency service can resolve.
+    /// </summary>
+    public static IServiceCollection AddRedisCache(this IServiceCollection services, IConfiguration configuration)
+    {
+        var connectionString = configuration["AZURE_REDIS_CONNECTION_STRING"]
+            ?? configuration["Redis:ConnectionString"];
+        if (string.IsNullOrEmpty(connectionString))
+        {
+            services.AddDistributedMemoryCache();
+            return services;
+        }
+
+        services.AddStackExchangeRedisCache(options =>
+        {
+            options.Configuration = connectionString;
+        });
+        return services;
+    }
+
+    /// <summary>
+    /// Registers IdempotencyService and binds IdempotencyCache configuration.
+    /// </summary>
+    public static IServiceCollection AddIdempotencyService(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.Configure<IdempotencyOptions>(configuration.GetSection(IdempotencyOptions.SectionName));
+        services.AddSingleton<IIdempotencyService, IdempotencyService>();
         return services;
     }
 

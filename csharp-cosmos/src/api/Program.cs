@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Serilog;
 using Todo.Core.Infrastructure;
 using Todo.Core.Middleware;
 
@@ -18,11 +19,11 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddHealthChecks();
-builder.Services.AddControllers();
+builder.Services.AddControllers(options => options.Filters.Add<Todo.Core.Middleware.ValidationFilter>());
 
 var app = builder.Build();
 
-// Middleware order: request logging first, then CORS, then error handling, then routing/endpoints
+// Middleware order: logging → CORS → error handling → validation → routing
 app.UseRequestLogging();
 app.UseCors(policy =>
 {
@@ -31,6 +32,7 @@ app.UseCors(policy =>
     policy.AllowAnyMethod();
 });
 app.UseErrorHandling();
+app.UseValidation();
 
 // Swagger UI
 app.UseSwaggerUI(options =>
