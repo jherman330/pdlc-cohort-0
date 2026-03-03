@@ -1,22 +1,28 @@
 # ToDo Application Tests
 
-The included [Playwright](https://playwright.dev/) smoke test will hit the ToDo app web endpoint, create, and delete an item.
+The included [Playwright](https://playwright.dev/) tests run against the web app. The smoke test checks that the placeholder page is visible.
 
 ## Run Tests
 
-The endpoint it hits will be discovered in this order:
+The base URL is resolved in this order:
 
 1. Value of `REACT_APP_WEB_BASE_URL` environment variable
-1. Value of `REACT_APP_WEB_BASE_URL` found in default .azure environment
-1. Defaults to `http://localhost:3000`
+2. Value of `REACT_APP_WEB_BASE_URL` from the default .azure environment
+3. Default: `http://localhost:3000`
 
-To run the tests:
+From the repo root:
 
-1. CD to /tests
-1. Run `npm i && npx playwright install`
-1. Run `npx playwright test`
+```bash
+cd csharp-cosmos/tests
+npm i && npx playwright install firefox
+npx playwright test
+```
 
-You can use the `--headed` flag to open a browser when running the tests.
+Or from this directory: `npm i && npx playwright install firefox` then `npx playwright test`.
+
+**Browsers:** Tests use Firefox and WebKit only (Chromium is not used, e.g. when blocked by org policy). Use `--project=firefox` or `--project=webkit` to run a single browser.
+
+Use `--headed` to open a browser while tests run.
 
 ## Debug Tests
 

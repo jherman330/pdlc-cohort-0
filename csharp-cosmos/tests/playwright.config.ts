@@ -1,5 +1,6 @@
-import { PlaywrightTestConfig } from "@playwright/test";
-import devices from "@playwright/test";
+/// <reference types="node" />
+import type { PlaywrightTestConfig } from "@playwright/test";
+import { devices } from "@playwright/test";
 import fs from "fs";
 import { join } from "path";
 import dotenv from "dotenv";
@@ -37,16 +38,14 @@ const config: PlaywrightTestConfig = {
     trace: "on-first-retry",
   },
 
-  /* Configure projects for major browsers */
+  /* Firefox and WebKit only (Chromium blocked by some org policies, e.g. EY) */
   projects: [
-    {
-      name: "chromium",
-      use: {
-        ...devices["Desktop Chrome"],
-      },
-    },
+    { name: "firefox", use: { ...devices["Desktop Firefox"] } },
+    { name: "webkit", use: { ...devices["Desktop Safari"] } },
   ],
 };
+
+export default config;
 
 function getBaseURL() {
   // If we don't have URL and aren't in CI, then try to load from environment
@@ -78,5 +77,3 @@ function getBaseURL() {
   console.log("baseUrl: " + baseURL);
   return baseURL;
 }
-
-export default config;
