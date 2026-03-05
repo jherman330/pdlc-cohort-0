@@ -33,7 +33,7 @@ coverage*.xml
 
 # Local and secrets (optional; uncomment if you use local overrides)
 # appsettings.Development.json
-# appsettings.*.local.json
+appsettings.*.local.json
 # **/secrets.json
 
 # Infra: local parameter overrides (may contain secrets; use env vars in pipelines instead)

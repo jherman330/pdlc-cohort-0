@@ -5,6 +5,8 @@ using Microsoft.Extensions.Caching.StackExchangeRedis;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Todo.Core.Configuration;
+using Todo.Core.Data.Cosmos;
+using Todo.Core.Data.Sql;
 using Todo.Core.Services;
 
 namespace Todo.Core.Infrastructure;
@@ -61,44 +63,59 @@ public static class StartupExtensions
 
     /// <summary>
     /// Binds CosmosDbSettings from configuration (CosmosDb section and AZURE_COSMOS_* env vars),
-    /// registers settings and the Cosmos DB client when endpoint is configured.
+    /// registers settings, Cosmos DB client when endpoint is configured, and ICosmosDbContext.
     /// </summary>
     public static IServiceCollection AddCosmosDb(this IServiceCollection services, IConfiguration configuration)
     {
         var section = configuration.GetSection(CosmosDbSettings.SectionName);
-        var settings = new CosmosDbSettings
+        services.Configure<CosmosDbSettings>(options =>
         {
-            Endpoint = section["Endpoint"] ?? configuration["AZURE_COSMOS_ENDPOINT"] ?? string.Empty,
-            DatabaseName = section["DatabaseName"] ?? configuration["AZURE_COSMOS_DATABASE_NAME"] ?? string.Empty,
-            ContainerNames = new CosmosDbContainerNames
+            options.Endpoint = section["Endpoint"] ?? configuration["AZURE_COSMOS_ENDPOINT"] ?? string.Empty;
+            options.DatabaseName = section["DatabaseName"] ?? configuration["AZURE_COSMOS_DATABASE_NAME"] ?? string.Empty;
+            options.Key = section["Key"] ?? configuration["AZURE_COSMOS_KEY"] ?? string.Empty;
+            options.MaxConnectionLimit = section.GetValue(nameof(CosmosDbSettings.MaxConnectionLimit), 50);
+            options.RequestTimeout = section.GetValue(nameof(CosmosDbSettings.RequestTimeout), 60);
+            options.ContainerNames = new CosmosDbContainerNames
             {
                 AssetInventory = section["ContainerNames:AssetInventory"] ?? "AssetInventory",
                 LicenseAllocations = section["ContainerNames:LicenseAllocations"] ?? "LicenseAllocations",
                 Events = section["ContainerNames:Events"] ?? "Events"
-            }
-        };
-        services.AddSingleton(settings);
+            };
+        });
 
-        if (string.IsNullOrEmpty(settings.Endpoint))
+        var endpoint = section["Endpoint"] ?? configuration["AZURE_COSMOS_ENDPOINT"] ?? string.Empty;
+        if (!string.IsNullOrEmpty(endpoint))
         {
-            return services;
+            services.AddSingleton(sp =>
+            {
+                var settings = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<CosmosDbSettings>>().Value;
+                var options = new CosmosClientOptions
+                {
+                    SerializerOptions = new CosmosSerializationOptions
+                    {
+                        PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
+                    },
+                    RequestTimeout = TimeSpan.FromSeconds(settings.RequestTimeout),
+                    GatewayModeMaxConnectionLimit = settings.MaxConnectionLimit
+                };
+
+                if (!string.IsNullOrEmpty(settings.Key))
+                    return new CosmosClient(settings.Endpoint, settings.Key, options);
+                var credential = new DefaultAzureCredential();
+                return new CosmosClient(settings.Endpoint, credential, options);
+            });
+
+            services.AddScoped<ICosmosDbContext>(sp =>
+                new CosmosDbContext(
+                    sp.GetRequiredService<CosmosClient>(),
+                    sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<CosmosDbSettings>>()));
         }
 
-        var credential = new DefaultAzureCredential();
-        var options = new CosmosClientOptions
-        {
-            SerializerOptions = new CosmosSerializationOptions
-            {
-                PropertyNamingPolicy = CosmosPropertyNamingPolicy.CamelCase
-            }
-        };
-
-        services.AddSingleton(_ => new CosmosClient(settings.Endpoint, credential, options));
         return services;
     }
 
     /// <summary>
-    /// Registers ReferenceDataDbContext and AzureSqlSettings. Connection from AzureSql:ConnectionString or AZURE_SQL_CONNECTION_STRING.
+    /// Registers ReferenceDataDbContext, SqlDbContext, and AzureSqlSettings. Connection from AzureSql:ConnectionString or AZURE_SQL_CONNECTION_STRING.
     /// </summary>
     public static IServiceCollection AddAzureSql(this IServiceCollection services, IConfiguration configuration)
     {
@@ -111,19 +128,35 @@ public static class StartupExtensions
             return services;
         }
 
-        var timeoutSeconds = configuration.GetValue($"{AzureSqlSettings.SectionName}:CommandTimeoutSeconds", 30);
-        var enableRetry = configuration.GetValue($"{AzureSqlSettings.SectionName}:EnableRetryOnFailure", true);
-        var maxRetryCount = configuration.GetValue($"{AzureSqlSettings.SectionName}:MaxRetryCount", 3);
+        var section = configuration.GetSection(AzureSqlSettings.SectionName);
+        var timeoutSeconds = section.GetValue(nameof(AzureSqlSettings.CommandTimeoutSeconds), 30);
+        var enableRetry = section.GetValue(nameof(AzureSqlSettings.EnableRetryOnFailure), true);
+        var maxRetryCount = section.GetValue(nameof(AzureSqlSettings.MaxRetryCount), 3);
+        var maxPoolSize = section.GetValue(nameof(AzureSqlSettings.MaxPoolSize), 0);
+        var connectionTimeout = section.GetValue(nameof(AzureSqlSettings.ConnectionTimeout), 30);
 
-        var builder = services.AddDbContext<ReferenceDataDbContext>(options =>
+        void SqlConfig(Microsoft.EntityFrameworkCore.Infrastructure.SqlServerDbContextOptionsBuilder sql)
         {
-            options.UseSqlServer(connectionString, sql =>
-            {
-                sql.CommandTimeout(timeoutSeconds);
-                if (enableRetry)
-                    sql.EnableRetryOnFailure(maxRetryCount);
-            });
+            sql.CommandTimeout(timeoutSeconds);
+            if (enableRetry) sql.EnableRetryOnFailure(maxRetryCount);
+        }
+
+        var connBuilder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString);
+        if (maxPoolSize > 0) connBuilder.MaxPoolSize = maxPoolSize;
+        if (connectionTimeout > 0) connBuilder.ConnectTimeout = connectionTimeout;
+        var finalConnectionString = connBuilder.ConnectionString;
+
+        services.AddDbContext<ReferenceDataDbContext>(options =>
+        {
+            options.UseSqlServer(finalConnectionString, SqlConfig);
         });
+
+        services.AddDbContext<SqlDbContext>(options =>
+        {
+            options.UseSqlServer(finalConnectionString, SqlConfig);
+        });
+
+        services.AddScoped<ISqlDbContext>(sp => sp.GetRequiredService<SqlDbContext>());
 
         return services;
     }
@@ -137,7 +170,8 @@ public static class StartupExtensions
     }
 
     /// <summary>
-    /// Placeholder for feature Repositories registration.
+    /// Placeholder for feature Repositories registration. Feature modules register IRepository{T} implementations here.
+    /// ICosmosDbContext, CosmosDbContext, ISqlDbContext, and SqlDbContext are registered in AddCosmosDb and AddAzureSql.
     /// </summary>
     public static IServiceCollection AddFeatureRepositories(this IServiceCollection services)
     {

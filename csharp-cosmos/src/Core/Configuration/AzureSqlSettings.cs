@@ -26,6 +26,12 @@ public class AzureSqlSettings
     [Range(1, 10)]
     public int MaxRetryCount { get; set; } = 3;
 
+    /// <summary>Max connection pool size (0 = default).</summary>
+    public int MaxPoolSize { get; set; }
+
+    /// <summary>Connection timeout in seconds.</summary>
+    public int ConnectionTimeout { get; set; } = 30;
+
     /// <summary>
     /// Returns the connection string to use. Prefers ConnectionString if non-empty; otherwise callers use components.
     /// </summary>

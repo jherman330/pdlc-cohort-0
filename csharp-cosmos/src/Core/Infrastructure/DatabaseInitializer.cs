@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Todo.Core.Configuration;
 
 namespace Todo.Core.Infrastructure;
@@ -19,7 +20,7 @@ public static class DatabaseInitializer
     {
         var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Todo.Core.Infrastructure.DatabaseInitializer");
         var client = app.Services.GetService<CosmosClient>();
-        var settings = app.Services.GetService<CosmosDbSettings>();
+        var settings = app.Services.GetService<IOptions<CosmosDbSettings>>()?.Value;
 
         if (client == null || settings == null || string.IsNullOrEmpty(settings.Endpoint) || string.IsNullOrEmpty(settings.DatabaseName))
         {
