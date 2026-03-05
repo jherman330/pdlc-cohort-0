@@ -51,4 +51,18 @@ app.MapControllers();
 app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = async (context, report) => await context.Response.WriteAsync("Healthy") });
 app.MapGet("/", () => Results.Ok("OK"));
 
+if (app.Environment.IsDevelopment() || !string.IsNullOrEmpty(app.Configuration["INITIALIZE_COSMOS_ON_STARTUP"]))
+{
+    try
+    {
+        await app.EnsureDatabaseCreatedAsync();
+    }
+    catch (Exception ex)
+    {
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Database initialization failed.");
+        throw;
+    }
+}
+
 app.Run();

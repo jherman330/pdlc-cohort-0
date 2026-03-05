@@ -23,6 +23,11 @@ param logAnalyticsName string = ''
 param resourceGroupName string = ''
 param webServiceName string = ''
 param apimServiceName string = ''
+param sqlServerName string = ''
+param sqlDatabaseName string = ''
+param sqlAdministratorLogin string = 'sqladmin'
+@secure()
+param sqlAdministratorLoginPassword string = ''
 
 @description('Flag to use Azure API Management to mediate the calls between the Web frontend and the backend API')
 param useAPIM bool = false
@@ -74,8 +79,8 @@ module api './app/api-appservice-avm.bicep' = {
     }
     appSettings: {
       AZURE_KEY_VAULT_ENDPOINT: keyVault.outputs.uri
-      AZURE_COSMOS_DATABASE_NAME: cosmos.outputs.databaseName
-      AZURE_COSMOS_ENDPOINT: cosmos.outputs.endpoint
+      AZURE_COSMOS_DATABASE_NAME: cosmosDb.outputs.databaseName
+      AZURE_COSMOS_ENDPOINT: cosmosAccount.outputs.endpoint
       API_ALLOW_ORIGINS: web.outputs.SERVICE_WEB_URI
       SCM_DO_BUILD_DURING_DEPLOYMENT: false
     }
@@ -112,16 +117,80 @@ module accessKeyVault 'br/public:avm/res/key-vault/vault:0.5.1' = {
   }
 }
 
-// The application database
-module cosmos './app/db-avm.bicep' = {
-  name: 'cosmos'
+// WO-7: Cosmos DB account (serverless), NoSQL database, and core collections with AssetID partition strategy
+module cosmosAccount './core/database/cosmos-account.bicep' = {
+  name: 'cosmos-account'
   scope: rg
   params: {
     accountName: !empty(cosmosAccountName) ? cosmosAccountName : '${abbrs.documentDBDatabaseAccounts}${resourceToken}'
     location: location
     tags: tags
-    principalId: principalId
-    backupPolicyType: 'Periodic'
+  }
+}
+
+module cosmosDb './core/database/cosmos-nosql-db.bicep' = {
+  name: 'cosmos-nosql-db'
+  scope: rg
+  params: {
+    cosmosAccountName: cosmosAccount.outputs.name
+    databaseName: 'App'
+    location: location
+    tags: tags
+    autoscaleMaxThroughput: 0
+  }
+}
+
+module containerAssetInventory './core/database/cosmos-container.bicep' = {
+  name: 'cosmos-container-asset-inventory'
+  scope: rg
+  params: {
+    cosmosAccountName: cosmosAccount.outputs.name
+    cosmosDatabaseName: cosmosDb.outputs.databaseName
+    containerName: 'AssetInventory'
+    partitionKeyPath: '/AssetID'
+    defaultTtlSeconds: -1
+    location: location
+    tags: tags
+    compositeIndexes: [
+      [
+        { path: '/AssetID', order: 'ascending' }
+        , { path: '/LastUpdated', order: 'descending' }
+      ]
+    ]
+  }
+}
+
+module containerLicenseAllocations './core/database/cosmos-container.bicep' = {
+  name: 'cosmos-container-license-allocations'
+  scope: rg
+  params: {
+    cosmosAccountName: cosmosAccount.outputs.name
+    cosmosDatabaseName: cosmosDb.outputs.databaseName
+    containerName: 'LicenseAllocations'
+    partitionKeyPath: '/AssetID'
+    defaultTtlSeconds: -1
+    location: location
+    tags: tags
+  }
+}
+
+module containerEvents './core/database/cosmos-container.bicep' = {
+  name: 'cosmos-container-events'
+  scope: rg
+  params: {
+    cosmosAccountName: cosmosAccount.outputs.name
+    cosmosDatabaseName: cosmosDb.outputs.databaseName
+    containerName: 'Events'
+    partitionKeyPath: '/AssetID'
+    defaultTtlSeconds: 2592000
+    location: location
+    tags: tags
+    compositeIndexes: [
+      [
+        { path: '/AssetID', order: 'ascending' }
+        , { path: '/EventTimestamp', order: 'descending' }
+      ]
+    ]
   }
 }
 
@@ -130,8 +199,36 @@ module apiCosmosRoleAssignment './app/cosmos-role-assignment.bicep' = {
   name: 'api-cosmos-role'
   scope: rg
   params: {
-    cosmosAccountName: cosmos.outputs.accountName
+    cosmosAccountName: cosmosAccount.outputs.name
     apiPrincipalId: api.outputs.SERVICE_API_IDENTITY_PRINCIPAL_ID
+  }
+}
+
+// WO-7: Azure SQL Server and Database for reference tables (Assets, AuditLog, LicenseUtilization)
+module sqlServer './core/database/sql-server.bicep' = {
+  name: 'sql-server'
+  scope: rg
+  params: {
+    serverName: !empty(sqlServerName) ? sqlServerName : '${abbrs.sqlServers}${resourceToken}'
+    location: location
+    tags: tags
+    administratorLogin: sqlAdministratorLogin
+    administratorLoginPassword: sqlAdministratorLoginPassword
+    minimalTlsVersion: '1.2'
+  }
+}
+
+module sqlDatabase './core/database/sql-database.bicep' = {
+  name: 'sql-database'
+  scope: rg
+  params: {
+    sqlServerName: sqlServer.outputs.name
+    databaseName: !empty(sqlDatabaseName) ? sqlDatabaseName : '${abbrs.sqlServersDatabases}${resourceToken}'
+    location: location
+    tags: tags
+    skuTier: 'Standard'
+    skuName: 'S0'
+    backupRetentionDays: 7
   }
 }
 
@@ -229,8 +326,10 @@ module apimApi 'br/public:avm/ptn/azd/apim-api:0.1.0' = if (useAPIM) {
 }
 
 // Data outputs
-output AZURE_COSMOS_ENDPOINT string = cosmos.outputs.endpoint
-output AZURE_COSMOS_DATABASE_NAME string = cosmos.outputs.databaseName
+output AZURE_COSMOS_ENDPOINT string = cosmosAccount.outputs.endpoint
+output AZURE_COSMOS_DATABASE_NAME string = cosmosDb.outputs.databaseName
+output AZURE_SQL_SERVER_FQDN string = sqlServer.outputs.fullyQualifiedDomainName
+output AZURE_SQL_DATABASE_NAME string = sqlDatabase.outputs.name
 
 // App outputs
 output APPLICATIONINSIGHTS_CONNECTION_STRING string = monitoring.outputs.applicationInsightsConnectionString

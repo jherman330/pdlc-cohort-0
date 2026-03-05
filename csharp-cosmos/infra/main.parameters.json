@@ -16,6 +16,12 @@
     },
     "apimSku": {
       "value": "${APIM_SKU=Consumption}"
+    },
+    "sqlAdministratorLogin": {
+      "value": "${AZURE_SQL_ADMIN_LOGIN=sqladmin}"
+    },
+    "sqlAdministratorLoginPassword": {
+      "value": "${AZURE_SQL_ADMIN_PASSWORD}"
     }
   }
 }
