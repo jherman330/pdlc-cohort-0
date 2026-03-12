@@ -1,43 +1,47 @@
-#!/bin/sh
-# Pre-commit hook that runs linting and tests on staged files
+@echo off
+setlocal enabledelayedexpansion
 
-echo "Running pre-commit checks..."
+echo Running pre-commit checks...
 
-FRONTEND_DIR="csharp-cosmos/src/web"
+set "FRONTEND_DIR=csharp-cosmos\src\web"
 
-if [ ! -f "$FRONTEND_DIR/package.json" ]; then
-  echo "ERROR: Frontend package.json not found at $FRONTEND_DIR"
-  exit 1
-fi
+if not exist "%FRONTEND_DIR%\package.json" (
+    echo ERROR: Frontend package.json not found at %FRONTEND_DIR%
+    exit /b 1
+)
 
-cd "$FRONTEND_DIR"
+cd /d "%FRONTEND_DIR%"
 
-# Run lint-staged (ESLint + Prettier on staged files)
-echo "Running linting checks..."
-npx lint-staged
+echo Formatting code with Prettier...
+call npx prettier --write .
+if !errorlevel! neq 0 (
+    echo ERROR: Prettier formatting failed
+    exit /b 1
+)
 
-if [ $? -ne 0 ]; then
-  echo "ERROR: Linting failed"
-  exit 1
-fi
+echo Checking TypeScript types...
+call npx tsc --noEmit
+if !errorlevel! neq 0 (
+    echo ERROR: TypeScript type checking failed
+    exit /b 1
+)
 
-# Run TypeScript type check
-echo "Checking TypeScript types..."
-npx tsc --noEmit
+echo Running ESLint and Prettier check...
+call npm run lint
+if !errorlevel! neq 0 (
+    echo ERROR: Linting failed - see errors above
+    exit /b 1
+)
 
-if [ $? -ne 0 ]; then
-  echo "ERROR: TypeScript type checking failed"
-  exit 1
-fi
+echo Running tests...
+call npm run test
+if !errorlevel! neq 0 (
+    echo ERROR: Tests failed
+    exit /b 1
+)
 
-# Run tests
-echo "Running tests..."
-npm run test
-
-if [ $? -ne 0 ]; then
-  echo "ERROR: Tests failed"
-  exit 1
-fi
+echo All pre-commit checks passed.
+exit /b 0
 
 echo "All pre-commit checks passed."
 cd - > /dev/null
