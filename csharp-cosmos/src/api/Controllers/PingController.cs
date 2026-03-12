@@ -16,4 +16,5 @@ public class PingController : BaseController
     /// </summary>
     [HttpGet]
     public IActionResult Get() => Ok("pong");
+     
 }
