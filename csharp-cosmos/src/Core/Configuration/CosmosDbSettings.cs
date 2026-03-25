@@ -27,6 +27,12 @@ public class CosmosDbSettings
 
     /// <summary>Default TTL in seconds; -1 or null for no TTL.</summary>
     public int? DefaultTtlSeconds { get; set; }
+
+    /// <summary>When true, restrict Cosmos HTTPS to certificates whose thumbprints match <see cref="PinnedCertificateThumbprints"/>.</summary>
+    public bool EnableCertificatePinning { get; set; }
+
+    /// <summary>Allowed server certificate thumbprints (SHA1 hex) when <see cref="EnableCertificatePinning"/> is true.</summary>
+    public string[] PinnedCertificateThumbprints { get; set; } = Array.Empty<string>();
 }
 
 /// <summary>

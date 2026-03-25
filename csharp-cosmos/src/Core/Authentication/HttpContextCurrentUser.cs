@@ -18,6 +18,8 @@ public sealed class HttpContextCurrentUser : ICurrentUser
         _http.HttpContext?.User.FindFirst(JwtRegisteredClaimNames.Email)?.Value
         ?? _http.HttpContext?.User.FindFirst(ClaimTypes.Email)?.Value;
 
+    public string? TenantId => _http.HttpContext?.User.FindFirst(AuthClaimTypes.TenantId)?.Value;
+
     public UserRole? Role
     {
         get

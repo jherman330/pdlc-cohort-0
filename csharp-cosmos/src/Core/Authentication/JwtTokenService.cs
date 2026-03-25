@@ -27,6 +27,8 @@ public sealed class JwtTokenService : IJwtTokenService
             new Claim(ClaimTypes.Email, user.Email),
             new(AuthClaimTypes.Role, user.Role.ToString()),
         };
+        if (!string.IsNullOrEmpty(user.TenantId))
+            claims.Add(new Claim(AuthClaimTypes.TenantId, user.TenantId));
         foreach (var permission in permissions)
             claims.Add(new Claim(AuthClaimTypes.Permission, permission));
 

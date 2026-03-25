@@ -39,6 +39,7 @@ public sealed class AuthService : IAuthService
             UserId = record.UserId,
             Email = record.Email,
             Role = role,
+            TenantId = record.TenantId,
         };
         return await IssueTokensAsync(user, cancellationToken);
     }

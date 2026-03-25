@@ -18,4 +18,7 @@ public sealed class BootstrapUserOptions
     public string Email { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
     public string Role { get; set; } = string.Empty;
+
+    /// <summary>Organization tenant id for SQL RLS (must match Assets.TenantID).</summary>
+    public string TenantId { get; set; } = string.Empty;
 }

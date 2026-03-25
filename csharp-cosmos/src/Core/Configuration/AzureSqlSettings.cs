@@ -33,6 +33,12 @@ public class AzureSqlSettings
     public int ConnectionTimeout { get; set; } = 30;
 
     /// <summary>
+    /// Fallback tenant id for SESSION_CONTEXT when no JWT tenant claim is present (e.g. health probes).
+    /// Leave empty to skip setting session context when unauthenticated.
+    /// </summary>
+    public string DefaultTenantId { get; set; } = string.Empty;
+
+    /// <summary>
     /// Returns the connection string to use. Prefers ConnectionString if non-empty; otherwise callers use components.
     /// </summary>
     public string GetConnectionString() => ConnectionString;

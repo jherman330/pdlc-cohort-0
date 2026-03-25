@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Net.Security;
 using Azure.Identity;
 using Microsoft.Azure.Cosmos;
 using Microsoft.EntityFrameworkCore;
@@ -7,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Todo.Core.Configuration;
 using Todo.Core.Data.Cosmos;
 using Todo.Core.Data.Sql;
+using Todo.Core.Security;
 using Todo.Core.Services;
 
 namespace Todo.Core.Infrastructure;
@@ -23,6 +27,11 @@ public static class StartupExtensions
     /// </summary>
     public static IServiceCollection AddCoreInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
+        services.Configure<PiiEncryptionSettings>(configuration.GetSection(PiiEncryptionSettings.SectionName));
+        var piiKey = configuration[$"{PiiEncryptionSettings.SectionName}:EncryptionKeyBase64"];
+        if (!string.IsNullOrWhiteSpace(piiKey))
+            services.AddSingleton<IPiiFieldProtector, PiiFieldProtector>();
+
         services.AddCosmosDb(configuration);
         services.AddAzureSql(configuration);
         services.AddRedisCache(configuration);
@@ -81,6 +90,9 @@ public static class StartupExtensions
                 LicenseAllocations = section["ContainerNames:LicenseAllocations"] ?? "LicenseAllocations",
                 Events = section["ContainerNames:Events"] ?? "Events"
             };
+            options.EnableCertificatePinning = section.GetValue(nameof(CosmosDbSettings.EnableCertificatePinning), false);
+            options.PinnedCertificateThumbprints = section.GetSection(nameof(CosmosDbSettings.PinnedCertificateThumbprints)).Get<string[]>()
+                ?? Array.Empty<string>();
         });
 
         var endpoint = section["Endpoint"] ?? configuration["AZURE_COSMOS_ENDPOINT"] ?? string.Empty;
@@ -98,6 +110,23 @@ public static class StartupExtensions
                     RequestTimeout = TimeSpan.FromSeconds(settings.RequestTimeout),
                     GatewayModeMaxConnectionLimit = settings.MaxConnectionLimit
                 };
+
+                if (settings.EnableCertificatePinning && settings.PinnedCertificateThumbprints is { Length: > 0 })
+                {
+                    var allowed = new HashSet<string>(settings.PinnedCertificateThumbprints, StringComparer.OrdinalIgnoreCase);
+                    options.HttpClientFactory = () =>
+                    {
+                        var handler = new SocketsHttpHandler();
+                        handler.SslOptions.RemoteCertificateValidationCallback = ( _, cert, _, _ ) =>
+                        {
+                            if (cert == null)
+                                return false;
+                            var thumb = cert.GetCertHashString();
+                            return allowed.Contains(thumb);
+                        };
+                        return new HttpClient(handler);
+                    };
+                }
 
                 if (!string.IsNullOrEmpty(settings.Key))
                     return new CosmosClient(settings.Endpoint, settings.Key, options);
@@ -141,19 +170,26 @@ public static class StartupExtensions
             if (enableRetry) sql.EnableRetryOnFailure(maxRetryCount);
         }
 
-        var connBuilder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString);
+        var connBuilder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString)
+        {
+            Encrypt = true,
+            TrustServerCertificate = false,
+        };
         if (maxPoolSize > 0) connBuilder.MaxPoolSize = maxPoolSize;
         if (connectionTimeout > 0) connBuilder.ConnectTimeout = connectionTimeout;
         var finalConnectionString = connBuilder.ConnectionString;
 
-        services.AddDbContext<ReferenceDataDbContext>(options =>
+        services.AddSingleton<SqlSessionContextInterceptor>();
+        services.AddDbContext<ReferenceDataDbContext>((sp, options) =>
         {
-            options.UseSqlServer(finalConnectionString, SqlConfig);
+            options.UseSqlServer(finalConnectionString, SqlConfig)
+                .AddInterceptors(sp.GetRequiredService<SqlSessionContextInterceptor>());
         });
 
-        services.AddDbContext<SqlDbContext>(options =>
+        services.AddDbContext<SqlDbContext>((sp, options) =>
         {
-            options.UseSqlServer(finalConnectionString, SqlConfig);
+            options.UseSqlServer(finalConnectionString, SqlConfig)
+                .AddInterceptors(sp.GetRequiredService<SqlSessionContextInterceptor>());
         });
 
         services.AddScoped<ISqlDbContext>(sp => sp.GetRequiredService<SqlDbContext>());

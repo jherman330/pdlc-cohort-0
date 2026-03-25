@@ -35,6 +35,7 @@ public sealed class BootstrapUserCredentialValidator : IUserCredentialValidator
         {
             UserId = match.UserId,
             Email = match.Email,
+            TenantId = string.IsNullOrWhiteSpace(match.TenantId) ? null : match.TenantId.Trim(),
             Role = role,
         });
     }

@@ -24,11 +24,13 @@ public class AuthWebApplicationFactory : WebApplicationFactory<Program>
             "BootstrapAuth:Users:0:PasswordHash",
             "AQAAAAIAAYagAAAAEN9jQFR6FQCOZbYizpTogkRJBwF86TAmCFBuf7yn8smwVeH0GKwBRifSIc1G7Kd0wQ==");
         builder.UseSetting("BootstrapAuth:Users:0:Role", "ItManager");
+        builder.UseSetting("BootstrapAuth:Users:0:TenantId", "test-tenant-001");
         builder.UseSetting("BootstrapAuth:Users:1:UserId", "b0000000-0000-4000-8000-000000000002");
         builder.UseSetting("BootstrapAuth:Users:1:Email", ExecutiveEmail);
         builder.UseSetting(
             "BootstrapAuth:Users:1:PasswordHash",
             "AQAAAAIAAYagAAAAEN9jQFR6FQCOZbYizpTogkRJBwF86TAmCFBuf7yn8smwVeH0GKwBRifSIc1G7Kd0wQ==");
         builder.UseSetting("BootstrapAuth:Users:1:Role", "Executive");
+        builder.UseSetting("BootstrapAuth:Users:1:TenantId", "test-tenant-002");
     }
 }

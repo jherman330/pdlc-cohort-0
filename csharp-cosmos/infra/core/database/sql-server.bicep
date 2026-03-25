@@ -16,6 +16,9 @@ resource sqlServer 'Microsoft.Sql/servers@2024-11-01-preview' = {
   name: serverName
   location: location
   tags: tags
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     administratorLogin: administratorLogin
     administratorLoginPassword: administratorLoginPassword
@@ -34,7 +37,7 @@ resource sqlServer 'Microsoft.Sql/servers@2024-11-01-preview' = {
 
 resource auditPolicy 'Microsoft.Sql/servers/auditingSettings@2024-11-01-preview' = {
   parent: sqlServer
-  name: 'Default'
+  name: 'default'
   properties: {
     state: 'Disabled'
     retentionDays: 0
@@ -53,3 +56,5 @@ resource fwAllowAzure 'Microsoft.Sql/servers/firewallRules@2024-11-01-preview' =
 output name string = sqlServer.name
 output fullyQualifiedDomainName string = sqlServer.properties.fullyQualifiedDomainName
 output resourceId string = sqlServer.id
+@description('System-assigned managed identity principal ID for Key Vault access (TDE BYOK).')
+output identityPrincipalId string = sqlServer.identity.principalId

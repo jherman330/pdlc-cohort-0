@@ -5,7 +5,7 @@ namespace Todo.Core.Infrastructure;
 
 /// <summary>
 /// EF Core DbContext for Azure SQL reference tables (Assets, AuditLog, LicenseUtilization).
-/// Schema is created by infra/core/database/sql-schema.sql.
+/// Schema is created by infra/core/database/sql-schema.sql; WO-8 RLS by sql-rls.sql.
 /// </summary>
 public class ReferenceDataDbContext : DbContext
 {
@@ -24,11 +24,13 @@ public class ReferenceDataDbContext : DbContext
         {
             e.ToTable("Assets");
             e.HasKey(x => x.AssetId);
+            e.Property(x => x.TenantId).HasColumnName("TenantID");
         });
         modelBuilder.Entity<AuditLogEntity>(e =>
         {
             e.ToTable("AuditLog");
             e.HasKey(x => x.AuditId);
+            e.Property(x => x.TenantId).HasColumnName("TenantID");
             e.HasIndex(x => x.Timestamp);
             e.HasIndex(x => x.AssetId);
         });
@@ -36,6 +38,7 @@ public class ReferenceDataDbContext : DbContext
         {
             e.ToTable("LicenseUtilization");
             e.HasKey(x => x.UtilizationId);
+            e.Property(x => x.TenantId).HasColumnName("TenantID");
             e.HasIndex(x => x.SnapshotDate);
             e.HasIndex(x => x.AssetId);
         });

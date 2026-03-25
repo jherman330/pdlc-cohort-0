@@ -5,4 +5,7 @@ public static class AuthClaimTypes
 {
     public const string Permission = "permission";
     public const string Role = "role";
+
+    /// <summary>Organization / tenant identifier for SQL row-level security.</summary>
+    public const string TenantId = "tenant_id";
 }

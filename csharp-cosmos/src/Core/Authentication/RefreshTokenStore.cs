@@ -27,6 +27,7 @@ public sealed class RefreshTokenStore : IRefreshTokenStore
             UserId = user.UserId,
             Email = user.Email,
             Role = user.Role.ToString(),
+            TenantId = user.TenantId,
         };
         var json = JsonSerializer.Serialize(payload, JsonOptions);
         var opts = new DistributedCacheEntryOptions

@@ -38,6 +38,9 @@ param apimSku string = 'Consumption'
 @description('Id of the user or app to assign application roles')
 param principalId string = ''
 
+@description('WO-8: When true, deploy Key Vault RSA keys, SQL TDE BYOK, and Cosmos CMK (requires Key Vault purge protection).')
+param deployCustomerManagedKeys bool = true
+
 var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName }
@@ -49,7 +52,50 @@ resource rg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
   tags: tags
 }
 
-// The application frontend
+// Key Vault first (WO-8: soft-delete + purge protection required for Cosmos CMK)
+module keyVault 'br/public:avm/res/key-vault/vault:0.5.1' = {
+  name: 'keyvault'
+  scope: rg
+  params: {
+    name: !empty(keyVaultName) ? keyVaultName : '${abbrs.keyVaultVaults}${resourceToken}'
+    location: location
+    tags: tags
+    enableRbacAuthorization: false
+    enableVaultForDeployment: false
+    enableVaultForTemplateDeployment: false
+    enablePurgeProtection: deployCustomerManagedKeys
+    sku: 'standard'
+  }
+}
+
+module appServicePlan 'br/public:avm/res/web/serverfarm:0.1.1' = {
+  name: 'appserviceplan'
+  scope: rg
+  params: {
+    name: !empty(appServicePlanName) ? appServicePlanName : '${abbrs.webServerFarms}${resourceToken}'
+    sku: {
+      name: 'B3'
+      tier: 'Basic'
+    }
+    location: location
+    tags: tags
+    reserved: true
+    kind: 'Linux'
+  }
+}
+
+module monitoring 'br/public:avm/ptn/azd/monitoring:0.1.0' = {
+  name: 'monitoring'
+  scope: rg
+  params: {
+    applicationInsightsName: !empty(applicationInsightsName) ? applicationInsightsName : '${abbrs.insightsComponents}${resourceToken}'
+    logAnalyticsName: !empty(logAnalyticsName) ? logAnalyticsName : '${abbrs.operationalInsightsWorkspaces}${resourceToken}'
+    applicationInsightsDashboardName: !empty(applicationInsightsDashboardName) ? applicationInsightsDashboardName : '${abbrs.portalDashboards}${resourceToken}'
+    location: location
+    tags: tags
+  }
+}
+
 module web './app/web-appservice-avm.bicep' = {
   name: 'web'
   scope: rg
@@ -63,61 +109,119 @@ module web './app/web-appservice-avm.bicep' = {
   }
 }
 
-// The application backend
-module api './app/api-appservice-avm.bicep' = {
-  name: 'api'
+// WO-7 / WO-8: SQL before Key Vault policies so SQL MI can be granted key access for TDE BYOK
+module sqlServer './core/database/sql-server.bicep' = {
+  name: 'sql-server'
   scope: rg
   params: {
-    name: !empty(apiServiceName) ? apiServiceName : '${abbrs.webSitesAppService}api-${resourceToken}'
+    serverName: !empty(sqlServerName) ? sqlServerName : '${abbrs.sqlServers}${resourceToken}'
     location: location
     tags: tags
-    kind: 'app'
-    appServicePlanId: appServicePlan.outputs.resourceId
-    siteConfig: {
-      alwaysOn: true
-      linuxFxVersion: 'dotnetcore|8.0'
-    }
-    appSettings: {
-      AZURE_KEY_VAULT_ENDPOINT: keyVault.outputs.uri
-      AZURE_COSMOS_DATABASE_NAME: cosmosDb.outputs.databaseName
-      AZURE_COSMOS_ENDPOINT: cosmosAccount.outputs.endpoint
-      API_ALLOW_ORIGINS: web.outputs.SERVICE_WEB_URI
-      SCM_DO_BUILD_DURING_DEPLOYMENT: false
-    }
-    appInsightResourceId: monitoring.outputs.applicationInsightsResourceId
-    allowedOrigins: [ web.outputs.SERVICE_WEB_URI ]
+    administratorLogin: sqlAdministratorLogin
+    administratorLoginPassword: sqlAdministratorLoginPassword
+    minimalTlsVersion: '1.2'
   }
 }
 
-// Give the API access to KeyVault
-module accessKeyVault 'br/public:avm/res/key-vault/vault:0.5.1' = {
-  name: 'accesskeyvault'
+module sqlDatabase './core/database/sql-database.bicep' = {
+  name: 'sql-database'
+  scope: rg
+  params: {
+    sqlServerName: sqlServer.outputs.name
+    databaseName: !empty(sqlDatabaseName) ? sqlDatabaseName : '${abbrs.sqlServersDatabases}${resourceToken}'
+    location: location
+    tags: tags
+    skuTier: 'Standard'
+    skuName: 'S0'
+    backupRetentionDays: 7
+  }
+}
+
+// WO-8: User-assigned identity for Cosmos CMK Key Vault access (always deployed; used when deployCustomerManagedKeys is true)
+module cosmosCmIdentity './core/security/user-assigned-identity.bicep' = {
+  name: 'cosmos-cmk-identity'
+  scope: rg
+  params: {
+    name: '${abbrs.managedIdentityUserAssignedIdentities}cosmos-cmk-${resourceToken}'
+    location: location
+    tags: tags
+  }
+}
+
+// WO-8: Phase 1 — grant SQL MI + Cosmos UMI (+ optional principal) to Key Vault keys before Cosmos account creation (API MI added in phase 2 after api exists)
+module accessKeyVaultCore 'br/public:avm/res/key-vault/vault:0.5.1' = if (deployCustomerManagedKeys) {
+  name: 'accesskeyvault-core'
   scope: rg
   params: {
     name: keyVault.outputs.name
     enableRbacAuthorization: false
     enableVaultForDeployment: false
     enableVaultForTemplateDeployment: false
-    enablePurgeProtection: false
+    enablePurgeProtection: deployCustomerManagedKeys
     sku: 'standard'
     accessPolicies: [
       {
         objectId: principalId
         permissions: {
           secrets: [ 'get', 'list' ]
+          keys: [ 'get', 'list', 'create', 'delete', 'wrapKey', 'unwrapKey' ]
         }
       }
       {
-        objectId: api.outputs.SERVICE_API_IDENTITY_PRINCIPAL_ID
+        objectId: sqlServer.outputs.identityPrincipalId
         permissions: {
-          secrets: [ 'get', 'list' ]
+          keys: [ 'get', 'wrapKey', 'unwrapKey' ]
+        }
+      }
+      {
+        objectId: cosmosCmIdentity.outputs.principalId
+        permissions: {
+          keys: [ 'get', 'wrapKey', 'unwrapKey' ]
         }
       }
     ]
   }
 }
 
-// WO-7: Cosmos DB account (serverless), NoSQL database, and core collections with AssetID partition strategy
+module kvSqlTdeKey './core/security/key-vault-rsa-key.bicep' = if (deployCustomerManagedKeys) {
+  name: 'kv-sql-tde-key'
+  scope: rg
+  params: {
+    vaultName: keyVault.outputs.name
+    keyName: 'sql-tde-byok'
+    tags: tags
+  }
+  dependsOn: [
+    accessKeyVaultCore
+  ]
+}
+
+module kvCosmosCmkKey './core/security/key-vault-rsa-key.bicep' = if (deployCustomerManagedKeys) {
+  name: 'kv-cosmos-cmk-key'
+  scope: rg
+  params: {
+    vaultName: keyVault.outputs.name
+    keyName: 'cosmos-cmk'
+    tags: tags
+  }
+  dependsOn: [
+    accessKeyVaultCore
+  ]
+}
+
+module sqlTdeByok './core/database/sql-tde-byok.bicep' = if (deployCustomerManagedKeys) {
+  name: 'sql-tde-byok'
+  scope: rg
+  params: {
+    sqlServerName: sqlServer.outputs.name
+    azureKeyVaultKeyUri: kvSqlTdeKey.outputs.keyUriWithVersion
+  }
+  dependsOn: [
+    kvSqlTdeKey
+    accessKeyVaultCore
+  ]
+}
+
 module cosmosAccount './core/database/cosmos-account.bicep' = {
   name: 'cosmos-account'
   scope: rg
@@ -125,7 +229,11 @@ module cosmosAccount './core/database/cosmos-account.bicep' = {
     accountName: !empty(cosmosAccountName) ? cosmosAccountName : '${abbrs.documentDBDatabaseAccounts}${resourceToken}'
     location: location
     tags: tags
+    enableCustomerManagedKey: deployCustomerManagedKeys
+    userAssignedIdentityResourceId: deployCustomerManagedKeys ? cosmosCmIdentity.outputs.id : ''
+    keyVaultKeyUri: deployCustomerManagedKeys ? kvCosmosCmkKey.outputs.keyUriWithVersion : ''
   }
+  dependsOn: deployCustomerManagedKeys ? [ accessKeyVaultCore, kvCosmosCmkKey ] : []
 }
 
 module cosmosDb './core/database/cosmos-nosql-db.bicep' = {
@@ -151,12 +259,7 @@ module containerAssetInventory './core/database/cosmos-container.bicep' = {
     defaultTtlSeconds: -1
     location: location
     tags: tags
-    compositeIndexes: [
-      [
-        { path: '/AssetID', order: 'ascending' }
-        , { path: '/LastUpdated', order: 'descending' }
-      ]
-    ]
+    compositeIndexes: [ [ { path: '/AssetID', order: 'ascending' }, { path: '/LastUpdated', order: 'descending' } ] ]
   }
 }
 
@@ -185,16 +288,92 @@ module containerEvents './core/database/cosmos-container.bicep' = {
     defaultTtlSeconds: 2592000
     location: location
     tags: tags
-    compositeIndexes: [
-      [
-        { path: '/AssetID', order: 'ascending' }
-        , { path: '/EventTimestamp', order: 'descending' }
-      ]
-    ]
+    compositeIndexes: [ [ { path: '/AssetID', order: 'ascending' }, { path: '/EventTimestamp', order: 'descending' } ] ]
   }
 }
 
-// Give the API access to Cosmos using a separate role assignment
+// API after Cosmos so app settings can include endpoints; Key Vault access for API MI in phase 2
+module api './app/api-appservice-avm.bicep' = {
+  name: 'api'
+  scope: rg
+  params: {
+    name: !empty(apiServiceName) ? apiServiceName : '${abbrs.webSitesAppService}api-${resourceToken}'
+    location: location
+    tags: tags
+    kind: 'app'
+    appServicePlanId: appServicePlan.outputs.resourceId
+    siteConfig: {
+      alwaysOn: true
+      linuxFxVersion: 'dotnetcore|8.0'
+    }
+    appSettings: {
+      AZURE_KEY_VAULT_ENDPOINT: keyVault.outputs.uri
+      AZURE_COSMOS_DATABASE_NAME: cosmosDb.outputs.databaseName
+      AZURE_COSMOS_ENDPOINT: cosmosAccount.outputs.endpoint
+      API_ALLOW_ORIGINS: web.outputs.SERVICE_WEB_URI
+      SCM_DO_BUILD_DURING_DEPLOYMENT: false
+    }
+    appInsightResourceId: monitoring.outputs.applicationInsightsResourceId
+    allowedOrigins: [ web.outputs.SERVICE_WEB_URI ]
+  }
+}
+
+// WO-8: Phase 2 — add API managed identity to Key Vault (Cosmos + SQL already provisioned)
+module accessKeyVaultFull 'br/public:avm/res/key-vault/vault:0.5.1' = {
+  name: 'accesskeyvault-full'
+  scope: rg
+  params: {
+    name: keyVault.outputs.name
+    enableRbacAuthorization: false
+    enableVaultForDeployment: false
+    enableVaultForTemplateDeployment: false
+    enablePurgeProtection: deployCustomerManagedKeys
+    sku: 'standard'
+    accessPolicies: deployCustomerManagedKeys
+      ? [
+          {
+            objectId: principalId
+            permissions: {
+              secrets: [ 'get', 'list' ]
+              keys: [ 'get', 'list', 'create', 'delete', 'wrapKey', 'unwrapKey' ]
+            }
+          }
+          {
+            objectId: sqlServer.outputs.identityPrincipalId
+            permissions: {
+              keys: [ 'get', 'wrapKey', 'unwrapKey' ]
+            }
+          }
+      {
+        objectId: cosmosCmIdentity.outputs.principalId
+        permissions: {
+          keys: [ 'get', 'wrapKey', 'unwrapKey' ]
+        }
+      }
+          {
+            objectId: api.outputs.SERVICE_API_IDENTITY_PRINCIPAL_ID
+            permissions: {
+              secrets: [ 'get', 'list' ]
+            }
+          }
+        ]
+      : [
+          {
+            objectId: principalId
+            permissions: {
+              secrets: [ 'get', 'list' ]
+            }
+          }
+          {
+            objectId: api.outputs.SERVICE_API_IDENTITY_PRINCIPAL_ID
+            permissions: {
+              secrets: [ 'get', 'list' ]
+            }
+          }
+        ]
+  }
+}
+
 module apiCosmosRoleAssignment './app/cosmos-role-assignment.bicep' = {
   name: 'api-cosmos-role'
   scope: rg
@@ -204,82 +383,6 @@ module apiCosmosRoleAssignment './app/cosmos-role-assignment.bicep' = {
   }
 }
 
-// WO-7: Azure SQL Server and Database for reference tables (Assets, AuditLog, LicenseUtilization)
-module sqlServer './core/database/sql-server.bicep' = {
-  name: 'sql-server'
-  scope: rg
-  params: {
-    serverName: !empty(sqlServerName) ? sqlServerName : '${abbrs.sqlServers}${resourceToken}'
-    location: location
-    tags: tags
-    administratorLogin: sqlAdministratorLogin
-    administratorLoginPassword: sqlAdministratorLoginPassword
-    minimalTlsVersion: '1.2'
-  }
-}
-
-module sqlDatabase './core/database/sql-database.bicep' = {
-  name: 'sql-database'
-  scope: rg
-  params: {
-    sqlServerName: sqlServer.outputs.name
-    databaseName: !empty(sqlDatabaseName) ? sqlDatabaseName : '${abbrs.sqlServersDatabases}${resourceToken}'
-    location: location
-    tags: tags
-    skuTier: 'Standard'
-    skuName: 'S0'
-    backupRetentionDays: 7
-  }
-}
-
-
-// Create an App Service Plan to group applications under the same payment plan and SKU
-module appServicePlan 'br/public:avm/res/web/serverfarm:0.1.1' = {
-  name: 'appserviceplan'
-  scope: rg
-  params: {
-    name: !empty(appServicePlanName) ? appServicePlanName : '${abbrs.webServerFarms}${resourceToken}'
-    sku: {
-      name: 'B3'
-      tier: 'Basic'
-    }
-    location: location
-    tags: tags
-    reserved: true
-    kind: 'Linux'
-  }
-}
-
-// Create a keyvault to store secrets
-module keyVault 'br/public:avm/res/key-vault/vault:0.5.1' = {
-  name: 'keyvault'
-  scope: rg
-  params: {
-    name: !empty(keyVaultName) ? keyVaultName : '${abbrs.keyVaultVaults}${resourceToken}'
-    location: location
-    tags: tags
-    enableRbacAuthorization: false
-    enableVaultForDeployment: false
-    enableVaultForTemplateDeployment: false
-    enablePurgeProtection: false
-    sku: 'standard'
-  }
-}
-
-// Monitor application with Azure Monitor
-module monitoring 'br/public:avm/ptn/azd/monitoring:0.1.0' = {
-  name: 'monitoring'
-  scope: rg
-  params: {
-    applicationInsightsName: !empty(applicationInsightsName) ? applicationInsightsName : '${abbrs.insightsComponents}${resourceToken}'
-    logAnalyticsName: !empty(logAnalyticsName) ? logAnalyticsName : '${abbrs.operationalInsightsWorkspaces}${resourceToken}'
-    applicationInsightsDashboardName: !empty(applicationInsightsDashboardName) ? applicationInsightsDashboardName : '${abbrs.portalDashboards}${resourceToken}'
-    location: location
-    tags: tags
-  }
-}
-
-// Creates Azure API Management (APIM) service to mediate the requests between the frontend and the backend API
 module apim 'br/public:avm/res/api-management/service:0.2.0' = if (useAPIM) {
   name: 'apim-deployment'
   scope: rg
@@ -308,7 +411,6 @@ module apim 'br/public:avm/res/api-management/service:0.2.0' = if (useAPIM) {
   }
 }
 
-//Configures the API settings for an api app within the Azure API Management (APIM) service.
 module apimApi 'br/public:avm/ptn/azd/apim-api:0.1.0' = if (useAPIM) {
   name: 'apim-api-deployment'
   scope: rg

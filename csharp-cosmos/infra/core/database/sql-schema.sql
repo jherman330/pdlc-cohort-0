@@ -24,6 +24,7 @@ BEGIN
         UserID nvarchar(128) NOT NULL,
         Timestamp datetime2(7) NOT NULL,
         Details nvarchar(max) NULL,
+        TenantID nvarchar(128) NOT NULL,
         CONSTRAINT PK_AuditLog PRIMARY KEY (AuditID),
         CONSTRAINT FK_AuditLog_Assets FOREIGN KEY (AssetID) REFERENCES dbo.Assets(AssetID)
     );
@@ -41,6 +42,7 @@ BEGIN
         UsedCount int NOT NULL,
         TotalCount int NOT NULL,
         SnapshotDate datetime2(7) NOT NULL,
+        TenantID nvarchar(128) NOT NULL,
         CONSTRAINT PK_LicenseUtilization PRIMARY KEY (UtilizationID),
         CONSTRAINT FK_LicenseUtilization_Assets FOREIGN KEY (AssetID) REFERENCES dbo.Assets(AssetID)
     );
