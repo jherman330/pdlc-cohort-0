@@ -1,0 +1,50 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'csharp-cosmos/src/api/**'
+      - 'csharp-cosmos/src/Core/**'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'csharp-cosmos/src/api/**'
+      - 'csharp-cosmos/src/Core/**'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: csharp-cosmos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+          cache: true
+          cache-dependency-path: csharp-cosmos/**/packages.lock.json
+
+      - name: Build API
+        run: dotnet build src/api/Todo.Api.csproj
+
+      - name: Build Tests
+        run: dotnet build src/api/Todo.Api.Tests.csproj
+
+      - name: Run API Unit Tests
+        run: dotnet test src/api/Todo.Api.Tests.csproj --verbosity normal --logger "trx;LogFileName=test-results.trx"
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: csharp-cosmos/src/api/bin/**/test-results.trx
+
+      - name: Check code style (StyleCop)
+        run: dotnet build src/api/Todo.Api.csproj /p:EnforceCodeStyleInBuild=true
+        continue-on-error: true
