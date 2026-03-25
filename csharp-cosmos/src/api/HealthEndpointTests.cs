@@ -1,14 +1,16 @@
 using System.Net;
-using Microsoft.AspNetCore.Mvc.Testing;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Xunit;
 
 namespace Todo.Api.Tests;
 
-public class HealthEndpointTests : IClassFixture<WebApplicationFactory<Program>>
+public class HealthEndpointTests : IClassFixture<AuthWebApplicationFactory>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly AuthWebApplicationFactory _factory;
 
-    public HealthEndpointTests(WebApplicationFactory<Program> factory)
+    public HealthEndpointTests(AuthWebApplicationFactory factory)
     {
         _factory = factory;
     }
@@ -27,6 +29,17 @@ public class HealthEndpointTests : IClassFixture<WebApplicationFactory<Program>>
     public async Task GetPingV1_Returns200AndPong()
     {
         var client = _factory.CreateClient();
+        using var loginResponse = await client.PostAsJsonAsync("/api/v1/auth/login", new
+        {
+            email = AuthWebApplicationFactory.ItManagerEmail,
+            password = AuthWebApplicationFactory.TestPassword,
+        });
+        loginResponse.EnsureSuccessStatusCode();
+        await using var stream = await loginResponse.Content.ReadAsStreamAsync();
+        using var doc = await JsonDocument.ParseAsync(stream);
+        var accessToken = doc.RootElement.GetProperty("data").GetProperty("accessToken").GetString();
+        Assert.NotNull(accessToken);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         var response = await client.GetAsync("/api/v1/ping");
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync();

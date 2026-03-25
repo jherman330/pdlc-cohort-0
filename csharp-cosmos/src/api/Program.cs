@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.OpenApi.Models;
 using Serilog;
+using Todo.Core.Authentication;
 using Todo.Core.Infrastructure;
 using Todo.Core.Middleware;
 
@@ -12,11 +14,31 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
 
 // Core infrastructure (Cosmos and shared registrations via extensions)
 builder.Services.AddCoreInfrastructure(builder.Configuration);
+builder.Services.AddJwtAuthenticationAndAuthorization(builder.Configuration);
 
 builder.Services.AddCors();
 builder.Services.AddApplicationInsightsTelemetry(builder.Configuration);
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Description = "JWT Authorization header using the Bearer scheme.",
+    });
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" },
+            },
+            Array.Empty<string>()
+        },
+    });
+});
 
 builder.Services.AddHealthChecks();
 builder.Services.AddControllers(options => options.Filters.Add<Todo.Core.Middleware.ValidationFilter>());
@@ -47,6 +69,8 @@ app.UseStaticFiles(new StaticFileOptions
 });
 
 app.UseRouting();
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapControllers();
 app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = async (context, report) => await context.Response.WriteAsync("Healthy") });
 app.MapGet("/", () => Results.Ok("OK"));

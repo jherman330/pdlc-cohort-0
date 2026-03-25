@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Todo.Core.Authentication;
 using Todo.Core.Common;
 
 namespace Todo.Api.Controllers;
@@ -9,6 +11,7 @@ namespace Todo.Api.Controllers;
 /// </summary>
 [Route("api/v1/[controller]")]
 [ApiController]
+[Authorize(Policy = Permissions.Ping)]
 public class PingController : BaseController
 {
     /// <summary>
@@ -17,3 +20,4 @@ public class PingController : BaseController
     [HttpGet]
     public IActionResult Get() => Ok("pong");
 }
+

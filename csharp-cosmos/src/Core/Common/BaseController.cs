@@ -4,7 +4,7 @@ namespace Todo.Core.Common;
 
 /// <summary>
 /// Abstract base controller with common behavior: standard response patterns and Idempotency-Key support.
-/// Auth/user context stubbed for a future work order.
+/// User context is available via <see cref="Authentication.ICurrentUser"/> (JWT claims).
 /// </summary>
 [ApiController]
 public abstract class BaseController : ControllerBase
